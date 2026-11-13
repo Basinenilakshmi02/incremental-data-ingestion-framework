@@ -198,7 +198,9 @@ incremental_injextion_framework/
 ### Step 1: Clone the repository
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_URL
+
+
+git clone https://github.com/Basinenilakshmi02/incremental-data-ingestion-framework.git
 cd incremental-injextion_framework
 ```
 
