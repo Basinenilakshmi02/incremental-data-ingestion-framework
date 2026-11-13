@@ -17,9 +17,14 @@ LOG_DIR = BASE_DIR / "logs"
 DATABASE_PATH = OUTPUT_DIR / "incremental_ingestion.db"
 
 # Pipeline configuration
+# Pipeline configuration
 BATCH_SIZE = 1000
 WATERMARK_COLUMN = "updated_at"
 PRIMARY_KEY = "customer_id"
+
+# Incremental ingestion configuration
+SOURCE_NAME = "customer_events"
+WATERMARK_LOOKBACK_MINUTES = 1440  # 24 hours
 
 # Timestamp configuration
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"

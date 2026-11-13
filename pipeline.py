@@ -4,10 +4,15 @@ import json
 import hashlib
 import sqlite3
 import uuid
+from datetime import datetime, timezone, timedelta
 
-from datetime import datetime, timezone
-
-from config import DATABASE_PATH, INPUT_DIR
+from config import (
+    DATABASE_PATH,
+    INPUT_DIR,
+    SOURCE_NAME,
+    WATERMARK_LOOKBACK_MINUTES,
+    WATERMARK_COLUMN
+)
 from validation import validate_record
 from batch_reader import read_csv_in_batches
 from logger_config import get_logger
@@ -17,6 +22,40 @@ logger = get_logger()
 
 def get_timestamp():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def get_incremental_start_time(connection, source_name):
+    """
+    Read the previous watermark and calculate
+    the start time using the configured lookback.
+    """
+
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT last_watermark
+        FROM watermarks
+        WHERE source_name = ?
+    """, (source_name,))
+
+    result = cursor.fetchone()
+
+    # First run: process all available records
+    if result is None or result[0] is None:
+        return None
+
+    last_watermark = datetime.strptime(
+        result[0],
+        "%Y-%m-%dT%H:%M:%S"
+    )
+
+    # Recheck the previous 24 hours
+    incremental_start = (
+        last_watermark
+        - timedelta(minutes=WATERMARK_LOOKBACK_MINUTES)
+    )
+
+    return incremental_start.strftime(
+        "%Y-%m-%dT%H:%M:%S"
+    )
 
 
 def get_payload_hash(record):
@@ -28,7 +67,7 @@ def ingest_file(file_path):
 
     run_id = str(uuid.uuid4())
     source_file = file_path.name
-    source_name = source_file
+    source_name = SOURCE_NAME
 
     start_time = get_timestamp()
 
@@ -40,6 +79,16 @@ def ingest_file(file_path):
 
     connection = sqlite3.connect(DATABASE_PATH)
     cursor = connection.cursor()
+    incremental_start = get_incremental_start_time(
+    connection,
+    source_name
+)
+    
+
+    logger.info(
+    "Incremental start time: %s",
+    incremental_start or "FIRST RUN - FULL LOAD"
+)
 
     logger.info(
         "Batch pipeline started | Run ID: %s | Source: %s",
@@ -196,6 +245,12 @@ def ingest_file(file_path):
                             batch_rejected_count += 1
 
                         continue
+                    # Skip records outside the incremental lookback window
+                    if (
+                        incremental_start is not None
+                        and record[WATERMARK_COLUMN] < incremental_start
+                    ):
+                        continue
 
                     # Store the event in event history
                     cursor.execute("""
@@ -336,11 +391,9 @@ def ingest_file(file_path):
 
         # STEP 4: Update source watermark after all batches
         cursor.execute("""
-            SELECT MAX(updated_at)
-            FROM event_history
-            WHERE source_file = ?
-        """, (source_file,))
-
+    SELECT MAX(updated_at)
+    FROM event_history
+""")
         max_timestamp = cursor.fetchone()[0]
 
         cursor.execute("""
